@@ -8,7 +8,7 @@ let state = {
   profileId: null,
   hwId: null,
   topoId: null,
-  tab: 'start',
+  tab: 'config',
   copiedId: null
 };
 
@@ -129,7 +129,13 @@ function renderSelectors(m, view) {
     groups[g].push(s);
   });
 
-  const stackHtml = Object.keys(groups).sort().map(g => {
+  // Explicit group order (Standalone before Platform); any other groups follow in stable order.
+  const GROUP_ORDER = ['Standalone', 'Platform'];
+  const orderedGroups = [
+    ...GROUP_ORDER.filter(g => groups[g]),
+    ...Object.keys(groups).filter(g => !GROUP_ORDER.includes(g))
+  ];
+  const stackHtml = orderedGroups.map(g => {
     const items = groups[g].map(s => {
       const active = s.id === state.stackId;
       const blocked = s.blocked === true;
@@ -276,6 +282,7 @@ function renderConfigure(view) {
 
   const flagsSection = (cfg.flags_rows || []).length > 0 ? `
     <h2 style="font-family:'Red Hat Display',sans-serif;font-size:18px;margin:0 0 12px">vLLM arguments</h2>
+    ${/* trusted-HTML allow-list: flags_lede intentionally embeds <code>, kept raw */ ''}
     ${cfg.flags_lede ? '<p style="font-size:14px;color:#3C3F42;margin:0 0 12px">' + cfg.flags_lede + '</p>' : ''}
     ${cfg.vllm_serve ? `<details open class="drawer">
       <summary class="drawer__summary">
@@ -293,10 +300,11 @@ function renderConfigure(view) {
         ${(cfg.flags_rows || []).map(f => `<tr>
           <td style="font-family:monospace;font-size:12px">${esc(f.flag)}</td>
           <td style="font-family:monospace;font-size:12px">${esc(f.value)}</td>
-          <td style="font-size:13px">${f.why}</td>
+          <td style="font-size:13px">${esc(f.why)}</td>
         </tr>`).join('')}
       </tbody>
     </table>
+    ${/* trusted-HTML allow-list: arg_note intentionally embeds <code>, kept raw */ ''}
     ${cfg.arg_note ? '<div style="background:#FAFAFA;padding:10px 14px;font-size:13px;color:#3C3F42;margin:0 0 20px">' + cfg.arg_note + '</div>' : ''}` : '';
 
   const manifestSection = cfg.manifest ? `
@@ -327,11 +335,11 @@ function renderBenchmark(view) {
     return `<div class="banner">No data for this combination yet.</div>`;
   }
 
-  const provenanceHtml = bench.provenance ? `<div class="banner" style="margin-bottom:20px">${bench.provenance}</div>` : '';
+  const provenanceHtml = bench.provenance ? `<div class="banner" style="margin-bottom:20px">${esc(bench.provenance)}</div>` : '';
 
   const harnessDrawerHtml = bench.harness_drawer && bench.harness_drawer.code ? `
     <h2 style="font-family:'Red Hat Display',sans-serif;font-size:18px;margin:0 0 10px">Harness</h2>
-    ${bench.harness_lede ? '<p style="font-size:14px;color:#3C3F42;margin:0 0 12px;max-width:70ch">' + bench.harness_lede + '</p>' : ''}
+    ${bench.harness_lede ? '<p style="font-size:14px;color:#3C3F42;margin:0 0 12px;max-width:70ch">' + esc(bench.harness_lede) + '</p>' : ''}
     <details ${bench.harness_drawer.open ? 'open' : ''} class="drawer" style="margin-bottom:20px">
       <summary class="drawer__summary">
         <span style="font-family:monospace;font-size:12.5px;font-weight:600;white-space:nowrap">${esc(bench.harness_drawer.name)}</span>

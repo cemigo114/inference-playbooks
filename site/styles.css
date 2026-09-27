@@ -400,15 +400,7 @@ code {
 }
 
 /* Banners */
-.banner {
-  background: #FAFAFA;
-  border-left: 3px solid #8A8D90;
-  padding: 16px 18px;
-  font-size: 14px;
-  color: #3C3F42;
-  max-width: 70ch;
-}
-
+.banner,
 .banner--pending {
   background: #FAFAFA;
   border-left: 3px solid #8A8D90;

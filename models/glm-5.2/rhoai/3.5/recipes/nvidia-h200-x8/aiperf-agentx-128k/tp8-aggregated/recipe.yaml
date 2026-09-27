@@ -54,7 +54,7 @@ display:
       open: true
       code: |
         # benchmarks/manifests/aiperf-agentx-128k-job.yaml — set ENDPOINT, MODEL, TOKENIZER first
-        # Image: quay.io/rh-ee-thibrahi/aiperf:0.12.0  (alt: nvcr.io/nvidia/ai-dynamo/aiperf:0.12.0, needs NGC)
+        # Image: nvcr.io/nvidia/ai-dynamo/aiperf:0.12.0  (public NGC image; requires NGC access)
         aiperf profile \
           --scenario inferencex-agentx-mvp \
           --url "${ENDPOINT}" --endpoint /v1/chat/completions --endpoint-type chat \
