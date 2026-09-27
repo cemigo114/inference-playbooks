@@ -33,6 +33,22 @@ def test_h200_single_throughput_view_renders_flags():
     assert view["configure"]["manifest"]["body"].startswith("#") or "LLMInferenceService" in view["configure"]["manifest"]["body"]
 
 
+def test_guidellm_publishes_only_the_sourced_c16_row():
+    # Only C=16 traces to a committed result run; C=1/C=4 must not be published.
+    m = _glm(build_catalog(REPO))
+    view = m["views"]["rhoai|nvidia-h200-x8|single|guidellm-8k1k"]
+    loads = [r["load"] for r in view["benchmark"]["rows"]]
+    assert loads == ["C=16 · 189 req in 300 s"]
+    assert not any("C=1 " in l or "C=4 " in l for l in loads)
+
+
+def test_mi355x_hardware_label_is_correct():
+    # amd-mi355x-x8 is an AMD MI355X, not an H100.
+    m = _glm(build_catalog(REPO))
+    hw = {h["id"]: h["label"] for h in m["selectors"]["hardware"]}
+    assert hw["amd-mi355x-x8"] == "MI355X"
+
+
 def test_missing_combo_is_blocked_with_reason():
     m = _glm(build_catalog(REPO))
     # B200 multi-node has no seeded recipe

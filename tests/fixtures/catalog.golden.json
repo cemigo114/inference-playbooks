@@ -26,7 +26,7 @@
           },
           {
             "id": "amd-mi355x-x8",
-            "label": "H100",
+            "label": "MI355X",
             "recommended": false
           }
         ],
@@ -627,7 +627,7 @@
           "advanced": {},
           "benchmark": {
             "harness_drawer": {
-              "code": "# benchmarks/manifests/aiperf-agentx-128k-job.yaml — set ENDPOINT, MODEL, TOKENIZER first\n# Image: quay.io/rh-ee-thibrahi/aiperf:0.12.0  (alt: nvcr.io/nvidia/ai-dynamo/aiperf:0.12.0, needs NGC)\naiperf profile \\\n  --scenario inferencex-agentx-mvp \\\n  --url \"${ENDPOINT}\" --endpoint /v1/chat/completions --endpoint-type chat \\\n  --model \"${MODEL}\" --tokenizer \"${TOKENIZER}\" --tokenizer-trust-remote-code \\\n  --max-context-length 128000 \\\n  --public-dataset semianalysis_cc_traces_weka_062126 --num-dataset-entries 393 \\\n  --concurrency 32 --streaming --use-server-token-count \\\n  --trajectory-start-min-ratio 0.25 --trajectory-start-max-ratio 0.75 \\\n  --benchmark-duration 1800 --agentic-cache-warmup-duration 600 --warmup-grace-period 1800 \\\n  --failed-request-threshold 0.10 --random-seed 42 \\\n  --output-artifact-dir /results\n\n# Run as a Job; results land on the benchmark-results PVC. Allow ~2 h.\noc apply -f benchmarks/manifests/aiperf-agentx-128k-job.yaml -n ${NAMESPACE}\noc wait --for=condition=complete job/aiperf-agentx-128k -n ${NAMESPACE} --timeout=2h\n",
+              "code": "# benchmarks/manifests/aiperf-agentx-128k-job.yaml — set ENDPOINT, MODEL, TOKENIZER first\n# Image: nvcr.io/nvidia/ai-dynamo/aiperf:0.12.0  (public NGC image; requires NGC access)\naiperf profile \\\n  --scenario inferencex-agentx-mvp \\\n  --url \"${ENDPOINT}\" --endpoint /v1/chat/completions --endpoint-type chat \\\n  --model \"${MODEL}\" --tokenizer \"${TOKENIZER}\" --tokenizer-trust-remote-code \\\n  --max-context-length 128000 \\\n  --public-dataset semianalysis_cc_traces_weka_062126 --num-dataset-entries 393 \\\n  --concurrency 32 --streaming --use-server-token-count \\\n  --trajectory-start-min-ratio 0.25 --trajectory-start-max-ratio 0.75 \\\n  --benchmark-duration 1800 --agentic-cache-warmup-duration 600 --warmup-grace-period 1800 \\\n  --failed-request-threshold 0.10 --random-seed 42 \\\n  --output-artifact-dir /results\n\n# Run as a Job; results land on the benchmark-results PVC. Allow ~2 h.\noc apply -f benchmarks/manifests/aiperf-agentx-128k-job.yaml -n ${NAMESPACE}\noc wait --for=condition=complete job/aiperf-agentx-128k -n ${NAMESPACE} --timeout=2h\n",
               "id": "bench",
               "meta": "AIPerf 0.12.0 · AgentX trace replay · 1,800 s",
               "name": "aiperf-agentx-128k-job.yaml",
@@ -783,7 +783,7 @@
               "name": "guidellm-8k1k-sweep.sh",
               "open": true
             },
-            "harness_lede": "GuideLLM against a fixed 8000/1000 shape, concurrency 1 → 4 → 16, 300 s per stage. This matches the internal performance-team standard, so numbers are comparable across models.",
+            "harness_lede": "GuideLLM against a fixed 8000/1000 shape, 300 s per stage. The command runs a 1 → 4 → 16 concurrency sweep, but only the C=16 stage has a committed result run and is reported below. This matches the internal performance-team standard, so the point is comparable across models.",
             "issues": [
               [
                 "MTP incompatible with PP (vllm#44697)",
@@ -794,22 +794,8 @@
             "notes": [
               "Prefix caching is the cheapest win available. Shared-prefix traffic showed 63% lower TTFT p50 and 12% higher throughput, with no external infrastructure."
             ],
-            "provenance": "Read the provenance before you quote a number. The 8K/1K sweep ran on real weights. The PP=2 concurrency sweep and prefix-cache comparisons ran on dummy weights — valid for scheduler behavior, meaningless for quality. Re-run before any external claim.",
+            "provenance": "Only the C=16 point is published here. It is the single normalized result traced to a committed result run (results/guidellm-8k1k-c16-r1/). The harness command below still runs the full 1 → 4 → 16 sweep, but the C=1 and C=4 stages are not yet backed by a committed result run, so they are not published. Re-run and commit results before quoting any lower-concurrency number, and re-verify before any external claim.",
             "rows": [
-              {
-                "hit": "—",
-                "itl": "6.0 ms",
-                "load": "C=1 · 46 req in 300 s",
-                "tput": "151 out / 1,360 total",
-                "ttft": "665 ms"
-              },
-              {
-                "hit": "—",
-                "itl": "11.0 ms",
-                "load": "C=4 · 100 req in 300 s",
-                "tput": "339 out / 3,088 total",
-                "ttft": "692 ms"
-              },
               {
                 "hit": "—",
                 "itl": "23.0 ms",

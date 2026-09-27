@@ -102,21 +102,19 @@ def test_blocked_scope_button_is_inert(base_url):
         # Wait for selectors to render
         page.wait_for_selector(".selectors", timeout=5000)
 
-        # Find a blocked button (they have .btn--blocked class)
+        # Find a blocked button (they have .btn--blocked class).
+        # The catalog always seeds blocked combos, so at least one must render.
         blocked_buttons = page.locator(".btn--blocked")
+        assert blocked_buttons.count() > 0, "Catalog should always render at least one blocked button"
 
-        if blocked_buttons.count() > 0:
-            # Capture state before click
-            model_card_before = page.locator(".model-card").inner_text()
+        # Click the first blocked button (force=True because it may be disabled)
+        blocked_buttons.first.click(force=True)
 
-            # Click the first blocked button (force=True because it may be disabled)
-            blocked_buttons.first.click(force=True)
+        # Page should still be consistent - model card still present
+        page.wait_for_selector(".model-card", timeout=2000)
+        model_card_after = page.locator(".model-card").inner_text()
 
-            # Page should still be consistent - model card still present
-            page.wait_for_selector(".model-card", timeout=2000)
-            model_card_after = page.locator(".model-card").inner_text()
-
-            # Basic stability check: model card is still there
-            assert model_card_after.strip() != "", "Page should remain stable after clicking blocked button"
+        # Basic stability check: model card is still there
+        assert model_card_after.strip() != "", "Page should remain stable after clicking blocked button"
 
         browser.close()

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -19,7 +20,7 @@ from validate import load_yaml, contained_path
 HARDWARE = [
     {"id": "nvidia-h200-x8", "label": "H200", "recommended": True, "blocked_reason": None},
     {"id": "nvidia-b200-x8", "label": "B200", "recommended": False, "blocked_reason": "No validated NVFP4 recipe published yet."},
-    {"id": "amd-mi355x-x8", "label": "H100", "recommended": False, "blocked_reason": "No validated MXFP4 recipe published yet."},
+    {"id": "amd-mi355x-x8", "label": "MI355X", "recommended": False, "blocked_reason": "No validated MXFP4 recipe published yet."},
 ]
 
 STACKS = [
@@ -49,8 +50,12 @@ DEFAULT_COLORS = [
 
 
 def hash_color(model_id: str) -> str:
-    """Deterministic color selection from palette based on model_id."""
-    return DEFAULT_COLORS[hash(model_id) % len(DEFAULT_COLORS)]
+    """Deterministic color selection from palette based on model_id.
+
+    Uses md5 rather than the builtin hash(), which is salted per process and
+    would produce non-deterministic output across runs.
+    """
+    return DEFAULT_COLORS[int(hashlib.md5(model_id.encode()).hexdigest(), 16) % len(DEFAULT_COLORS)]
 
 
 def discover(repo: Path) -> tuple[dict[str, dict], dict[Path, dict], dict[str, dict], dict[str, dict]]:
@@ -257,7 +262,7 @@ def build_catalog(repo: Path) -> dict:
                         try:
                             hw_profile = load_yaml(hw_path)
                             hw_key = hw_profile.get("accelerator_key", hw_path.stem)
-                        except:
+                        except (OSError, ValueError, yaml.YAMLError):
                             hw_key = hw_path.stem
 
                     # Determine topology from deployment.scope

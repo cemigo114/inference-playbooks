@@ -46,8 +46,8 @@ display:
   artifact_table:
     - ["zai-org/GLM-5.2-FP8", "755.7 GB", "ba978f7…", "Upstream FP8 reference."]
   benchmark:
-    provenance: "Read the provenance before you quote a number. The 8K/1K sweep ran on real weights. The PP=2 concurrency sweep and prefix-cache comparisons ran on dummy weights — valid for scheduler behavior, meaningless for quality. Re-run before any external claim."
-    harness_lede: "GuideLLM against a fixed 8000/1000 shape, concurrency 1 → 4 → 16, 300 s per stage. This matches the internal performance-team standard, so numbers are comparable across models."
+    provenance: "Only the C=16 point is published here. It is the single normalized result traced to a committed result run (results/guidellm-8k1k-c16-r1/). The harness command below still runs the full 1 → 4 → 16 sweep, but the C=1 and C=4 stages are not yet backed by a committed result run, so they are not published. Re-run and commit results before quoting any lower-concurrency number, and re-verify before any external claim."
+    harness_lede: "GuideLLM against a fixed 8000/1000 shape, 300 s per stage. The command runs a 1 → 4 → 16 concurrency sweep, but only the C=16 stage has a committed result run and is reported below. This matches the internal performance-team standard, so the point is comparable across models."
     harness_drawer:
       id: "bench"
       name: "guidellm-8k1k-sweep.sh"
@@ -66,8 +66,6 @@ display:
 
         # Version pin required: guidellm==0.3.0 (CLI form removed in 0.7+)
     rows:
-      - {load: "C=1 · 46 req in 300 s", ttft: "665 ms", itl: "6.0 ms", tput: "151 out / 1,360 total", hit: "—"}
-      - {load: "C=4 · 100 req in 300 s", ttft: "692 ms", itl: "11.0 ms", tput: "339 out / 3,088 total", hit: "—"}
       - {load: "C=16 · 189 req in 300 s", ttft: "738 ms (p95 4,708)", itl: "23.0 ms", tput: "649 out / 6,126 total", hit: "—"}
     notes:
       - "Prefix caching is the cheapest win available. Shared-prefix traffic showed 63% lower TTFT p50 and 12% higher throughput, with no external infrastructure."
