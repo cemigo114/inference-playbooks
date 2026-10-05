@@ -15,6 +15,59 @@ buckets are derived from actual entries; no cartesian product or fictional
 hardware/version options are generated. Multiple matches require a recipe
 choice rather than overwriting one view.
 
+Models are displayed as visible native-radio cards, with exactly one selected
+at a time when the catalog is nonempty. All current models remain visible in
+deterministic catalog order; cards wrap on smaller screens. Choosing a model
+resets its filters and selects an actual available entry. Option
+filters still narrow actual configurations. Ranking or limiting the
+model list by recency or visits is deferred until there is a defined metadata
+or analytics policy; no popularity tracking is performed by this UI.
+
+Option controls filter the selected model's actual recipe/platform entries.
+Matching configurations are shown as readable, single-select recipe boxes,
+including a single available configuration. Labels use workload and factual
+deployment differences rather than opaque internal IDs. Filters are strict:
+an incompatible combination shows a clear empty state instead of silently
+relaxing other choices. Detailed configuration and evidence follow the selected
+box; technical identity remains available in collapsed details. No ranking,
+pagination, performance recommendation, or fabricated rationale is introduced.
+
+Scope (All/Single-node/Multi-node), workload (All/8k/1k/Agentic workload), and
+GPU model (All/B300/B200/H200/H100) are always-visible radio-button options.
+All includes every matching value; it does not select multiple recipe boxes.
+Agentic workload groups both the 128K and unlimited AgentX profiles. GPU
+matching uses the hardware profile's explicit accelerator model, not a path or
+grouping key. An option without matching recipes shows the empty state, rather
+than implying an available deployment.
+
+Platform is a separate always-visible family selector: All, vLLM,
+RHOAI / RHAII, and llm-d. Version uses dependent selection toggles indexed only from
+actual entries for the selected model and platform family, not the engine
+release index. It is disabled for All platforms or a family with no available
+versions. Changing family resets only the version criterion; other filters
+remain strict. Family grouping is presentation only: original stack/version
+identities, artifacts, and evidence attribution are unchanged.
+Version toggles sort numerically by major/minor/patch, with numbered EA
+releases before GA of the same release. Exact source labels remain distinct;
+opaque labels use a deterministic fallback. Display ordering is not evidence
+of engine compatibility. The read-only setup tab is titled Configuration.
+
+The catalog uses the available viewport width, with Scope and Workload grouped
+side by side on desktop. Provider, recipe maturity, and engine provenance are
+presented compactly without hiding validation attribution. Quick start is
+always visible: sourced steps are shown when supplied; otherwise a neutral
+placeholder identifies documentation still needed for storage access mode,
+model preparation and runtime prerequisites. The UI never infers RWX/RWO or
+pre-download requirements merely from deployment scope.
+Platform families with no entries for the selected model remain visible but
+are disabled and greyed out. Availability does not depend on other filters;
+All remains enabled, and explicitly blocked entries stay inspectable.
+
+The catalog navigation links to the static `workloads.html` reference page. It
+explains 8k/1k and agentic traffic, context-cap variants, and comparison caveats,
+with links to authoritative benchmark definitions. It needs no catalog fetch or
+JavaScript and is bundled with the site under the same build provenance.
+
 Each entry retains maturity, scope, workload, optimization intent, deployment
 mode, full hardware profile/path/revision, accelerator grouping key, serving
 allocation, effective serving overrides, constrained common or leader/worker arguments,

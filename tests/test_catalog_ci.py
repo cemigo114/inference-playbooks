@@ -46,7 +46,7 @@ def test_site_build_is_deterministic_and_does_not_modify_tracked_sources():
     assert (outputs[0] / 'catalog.json').read_bytes() == (outputs[1] / 'catalog.json').read_bytes()
     assert (outputs[0] / 'build-provenance.json').read_bytes() == (outputs[1] / 'build-provenance.json').read_bytes()
     provenance = json.loads((outputs[0] / 'build-provenance.json').read_text())
-    assert {'index.html', 'app.js', 'styles.css', 'catalog.json'} <= set(provenance['sha256'])
+    assert {'index.html', 'workloads.html', 'app.js', 'styles.css', 'catalog.json'} <= set(provenance['sha256'])
     after = subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=REPO)
     assert before == after
 

@@ -15,7 +15,7 @@ def test_all_recipe_platform_entries_reachable(page, served):
     assert len(payload['entries']) == 6
     for entry in payload['entries']:
         page.goto(url + '/?' + urlencode({'model': entry['model_id'], 'entry': entry['id']}))
-        expect(page.get_by_label('Recipe')).to_have_value(entry['id'])
+        expect(page.locator('input[name="catalog-recipe"]:checked')).to_have_value(entry['id'])
         expect(page.locator('.model-card')).to_contain_text(f"Recipe maturity: {entry['maturity']}")
         for artifact in entry['artifacts']:
             expect(page.locator('pre').filter(has_text=artifact['body']).first).to_be_visible()
@@ -26,12 +26,13 @@ def test_all_recipe_platform_entries_reachable(page, served):
 def test_invalid_urls_model_switch_and_ambiguity(page, served):
     page.goto(served[0] + '/?model=missing&entry=invalid')
     expect(page.locator('.model-card')).to_be_visible()
-    page.get_by_label('Model', exact=True).select_option('glm-5.2')
-    assert len(page.get_by_label('Recipe').locator('option').all()) == 4
-    page.get_by_label('Scope', exact=True).select_option('single-node')
-    assert len(page.get_by_label('Recipe').locator('option').all()) == 2
+    page.get_by_role('radio', name='GLM-5.2', exact=True).check()
+    assert page.locator('input[name="catalog-recipe"]').count() == 4
+    page.get_by_role('radiogroup', name='Scope', exact=True).get_by_role('radio', name='Single-node', exact=True).check()
+    assert page.locator('input[name="catalog-recipe"]').count() == 2
     expect(page.locator('.model-card')).to_contain_text('contributed')
-    page.get_by_label('Model', exact=True).select_option('gemma-4')
+    model = next(model for model in served[1]['models'] if model['id'] == 'gemma-4')
+    page.get_by_role('radio', name=model['name'], exact=True).check()
     expect(page.locator('.panel')).to_contain_text('1 GPUs')
     expect(page.locator('.panel')).to_contain_text('8 accelerators')
 
@@ -50,7 +51,7 @@ def test_blocked_entry_reason_not_fake_option_universe(page, served):
     payload = copy.deepcopy(served[1])
     entry = payload['entries'][0]; entry['blocked'] = True; entry['reason'] = 'Synthetic missing prerequisite'
     intercepted(page, served, payload)
-    page.get_by_label('Recipe').select_option(entry['id'])
+    page.locator('input[name="catalog-recipe"]').first.check()
     expect(page.locator('.banner--pending')).to_contain_text(entry['reason'])
     assert page.locator('.drawer').count() == 0
 

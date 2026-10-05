@@ -24,13 +24,13 @@ def test_mobile_catalog_entries_and_dropdowns_fit(page, served):
     url, payload = served
     for entry in payload['entries']:
         page.goto(url + '/?' + urlencode({'model': entry['model_id'], 'entry': entry['id']}))
-        expect(page.get_by_label('Recipe')).to_have_value(entry['id'])
+        expect(page.locator('input[name="catalog-recipe"]:checked')).to_have_value(entry['id'])
         page.evaluate('document.fonts.ready')
         assert_document_fits(page)
         assert_selectors_fit(page)
-    # Also exercise re-rendering through the model dropdown, not just deep links.
+    # Also exercise re-rendering through visible model choices, not just deep links.
     for model in payload['models']:
-        page.get_by_label('Model', exact=True).select_option(model['id'])
+        page.get_by_role('radio', name=model['name'], exact=True).check()
         expect(page.locator('.model-card')).to_be_visible()
         assert_document_fits(page)
         assert_selectors_fit(page)
@@ -67,17 +67,17 @@ def test_mobile_long_content_wraps_and_code_scrolls_locally(page, served):
     assert_document_fits(page)
 
 
-def test_desktop_platform_label_does_not_overlap_dropdown(page, served):
+def test_desktop_version_toggles_fit_their_group(page, served):
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.goto(served[0])
-    select = page.get_by_label('Platform/version', exact=True)
-    expect(select).to_be_visible()
+    page.get_by_role('radiogroup', name='Platform', exact=True).get_by_role('radio', name='vLLM', exact=True).check()
+    group = page.get_by_role('radiogroup', name='Version', exact=True)
+    expect(group).to_be_visible()
     page.evaluate('document.fonts.ready')
-    assert select.evaluate('''select => {
-        const label = select.closest('.sel-row').querySelector('.sel-label');
-        const range = document.createRange();
-        range.selectNodeContents(label);
-        return range.getBoundingClientRect().right <= select.getBoundingClientRect().left;
-    }''')
+    assert group.locator('.filter-option').evaluate_all('''options => options.every(option => {
+        const box = option.getBoundingClientRect();
+        const group = option.closest('fieldset').getBoundingClientRect();
+        return box.left >= group.left && box.right <= group.right;
+    })''')
     assert_document_fits(page)
     assert_selectors_fit(page)
