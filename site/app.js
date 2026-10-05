@@ -1,468 +1,254 @@
-// AI Hub Model Overview — catalog renderer
-// Vanilla JS, no framework, no CDN, runs from file://
-
+// AI Hub Model Overview — v4 recipe catalog renderer.
+// Retains the contributor shell, fonts, styles, selectors, tabs and drawers.
+// Contributor prose is text, never executable HTML. Preview requires HTTP.
 let CATALOG = null;
-let state = {
-  modelId: null,
-  stackId: null,
-  profileId: null,
-  hwId: null,
-  topoId: null,
-  tab: 'config',
-  copiedId: null
-};
+let state = { modelId: null, entryId: null, tab: 'config', filters: {} };
+const app = document.getElementById('app');
 
-const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-function currentModel() {
-  return CATALOG.models.find(m => m.id === state.modelId) || CATALOG.models[0];
+function node(tag, text, className) {
+  const element = document.createElement(tag);
+  if (text !== undefined && text !== null) element.textContent = String(text);
+  if (className) element.className = className;
+  return element;
 }
-
-function viewKey() {
-  return [state.stackId, state.hwId, state.topoId, state.profileId].join('|');
+function currentModel() { return CATALOG.models.find(model => model.id === state.modelId); }
+function modelEntries() { return CATALOG.entries.filter(entry => entry.model_id === state.modelId); }
+function currentView() { return modelEntries().find(entry => entry.id === state.entryId); }
+function platformKey(entry) { return `${entry.platform.stack} ${entry.platform.version}`; }
+function dimension(entry, key) {
+  return key === 'platform' ? platformKey(entry) : key === 'hardware' ? entry.hardware.accelerator_key : entry[key];
 }
-
-function currentView(m) {
-  const key = viewKey();
-  return m.views[key] || { blocked: true, reason: 'This combination is not available.', header_specs: [] };
+function matchingEntries() {
+  return modelEntries().filter(entry => Object.entries(state.filters).every(([key, value]) => !value || dimension(entry, key) === value));
 }
-
-function setState(patch) {
-  state = { ...state, ...patch };
-  render();
+function updateUrl() {
+  const url = new URL(location.href);
+  url.searchParams.set('model', state.modelId);
+  if (state.entryId) url.searchParams.set('entry', state.entryId);
+  else url.searchParams.delete('entry');
+  history.replaceState(null, '', url);
 }
-
-function wireDelegation() {
-  document.getElementById('app').addEventListener('click', e => {
-    const el = e.target.closest('[data-action]');
-    if (!el) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const action = el.dataset.action;
-    const id = el.dataset.id;
-    const actions = {
-      selectStack: () => setState({ stackId: id }),
-      selectHardware: () => setState({ hwId: id }),
-      selectTopology: () => setState({ topoId: id }),
-      selectProfile: () => setState({ profileId: id }),
-      selectTab: () => { setState({ tab: id }); window.scrollTo({ top: 0, behavior: 'smooth' }); },
-      copy: () => copy(id),
-      download: () => download(id),
-      noop: () => {}
-    };
-    (actions[action] || actions.noop)();
-  });
+function chooseModel(id, requestedEntry = null) {
+  state.modelId = CATALOG.models.some(model => model.id === id) ? id : CATALOG.models[0]?.id;
+  state.filters = {};
+  const entries = modelEntries();
+  state.entryId = entries.find(entry => entry.id === requestedEntry)?.id || entries.find(entry => !entry.blocked)?.id || entries[0]?.id || null;
+  state.tab = 'config';
 }
-
-function copy(drawerId) {
-  const m = currentModel();
-  const view = currentView(m);
-  let body = '';
-
-  // Resolve drawer body by id
-  if (drawerId === 'vllm-serve') {
-    body = view.configure?.vllm_serve || '';
-  } else if (drawerId === 'manifest') {
-    body = view.configure?.manifest?.body || '';
-  } else if (drawerId === 'bench') {
-    body = view.benchmark?.harness_drawer?.code || '';
+function selectFilter(key, value) {
+  state.filters[key] = value;
+  // Preserve the chosen dimension, relaxing other filters only if necessary.
+  for (const other of ['platform', 'hardware', 'scope', 'workload_profile']) {
+    if (matchingEntries().length) break;
+    if (other !== key) state.filters[other] = '';
   }
-
-  const text = String(body).replace(/<[^>]+>/g, '');
-  const done = () => {
-    setState({ copiedId: drawerId });
-    setTimeout(() => {
-      if (state.copiedId === drawerId) setState({ copiedId: null });
-    }, 1400);
-  };
-
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(done).catch(done);
-  } else {
-    done();
+  const matches = matchingEntries();
+  if (!matches.some(entry => entry.id === state.entryId)) {
+    state.entryId = matches.find(entry => !entry.blocked)?.id || matches[0]?.id || null;
+  }
+  updateUrl(); render();
+}
+function selector(label, options, selected, change) {
+  const row = node('div', null, 'sel-row');
+  const title = node('label', label, 'sel-label');
+  const select = node('select');
+  select.setAttribute('aria-label', label);
+  select.dataset.focusKey = `selector:${label}`;
+  for (const [value, text] of options) {
+    const option = node('option', text);
+    option.value = value;
+    option.selected = value === selected;
+    select.append(option);
+  }
+  select.addEventListener('change', () => change(select.value));
+  row.append(title, select);
+  return row;
+}
+function sourceLink(source, label = 'Source') {
+  if (!source) return node('span', 'Source unavailable');
+  try {
+    const url = new URL(source.url);
+    if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Unsafe URL');
+    const link = node('a', label);
+    link.href = url.href; link.rel = 'noopener noreferrer';
+    return link;
+  } catch (_) { return node('span', `${source.path || label} (local preview)`); }
+}
+function table(headers, rows) {
+  const result = node('table', null, 'rht');
+  const head = node('thead'), heading = node('tr'), body = node('tbody');
+  headers.forEach(text => heading.append(node('th', text)));
+  head.append(heading); result.append(head, body);
+  for (const row of rows) {
+    const tr = node('tr');
+    row.forEach(value => tr.append(node('td', value === null || value === undefined ? 'Unknown' : typeof value === 'object' ? JSON.stringify(value) : value)));
+    body.append(tr);
+  }
+  return result;
+}
+async function copy(body, button, entryId) {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(body);
+    if (button.isConnected && state.entryId === entryId) button.textContent = 'Copied';
+  } catch (_) {
+    if (button.isConnected) button.textContent = 'Copy failed — use Download';
   }
 }
-
-function download(fileKey) {
-  const view = currentView(currentModel());
-  const f = (view.files || {})[fileKey];
-  if (!f) return;
-  const blob = new Blob([f.body], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = f.name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+function download(file) {
+  const url = URL.createObjectURL(new Blob([file.body], { type: 'text/plain;charset=utf-8' }));
+  const anchor = node('a'); anchor.href = url; anchor.download = file.name;
+  document.body.append(anchor); anchor.click(); anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
-
-function renderBreadcrumb(m) {
-  return `<div class="crumb">
-    <a href="#" style="color:#6A6E73">AI Hub</a> /
-    <a href="#" style="color:#6A6E73">Models</a> /
-    <a href="#" style="color:#6A6E73">Catalog</a> /
-    <span style="color:#151515">${esc(m.name)}</span>
-  </div>`;
-}
-
-function renderModelCard(m) {
-  return `<div class="model-card">
-    <div style="width:56px;height:56px;border-radius:8px;background:${esc(m.icon_bg)};display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Red Hat Display',sans-serif;font-weight:700;font-size:22px;flex-shrink:0">${esc(m.icon_letter)}</div>
-    <div style="flex:1;min-width:280px">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <h1 style="font-family:'Red Hat Display',sans-serif;font-size:24px;font-weight:700;margin:0;white-space:nowrap">${esc(m.name)}</h1>
-        ${m.validated ? '<span class="pill--validated">✓ Maturity: validated</span>' : ''}
-      </div>
-      <div style="font-size:13px;color:#6A6E73;margin:6px 0 12px">Provided by ${esc(m.provider)} · Red Hat AI Validated Models</div>
-    </div>
-  </div>`;
-}
-
-function renderSelectors(m, view) {
-  const stacks = m.selectors.stacks || [];
-  const groups = {};
-  stacks.forEach(s => {
-    const g = s.group || 'Other';
-    if (!groups[g]) groups[g] = [];
-    groups[g].push(s);
-  });
-
-  // Explicit group order (Standalone before Platform); any other groups follow in stable order.
-  const GROUP_ORDER = ['Standalone', 'Platform'];
-  const orderedGroups = [
-    ...GROUP_ORDER.filter(g => groups[g]),
-    ...Object.keys(groups).filter(g => !GROUP_ORDER.includes(g))
-  ];
-  const stackHtml = orderedGroups.map(g => {
-    const items = groups[g].map(s => {
-      const active = s.id === state.stackId;
-      const blocked = s.blocked === true;
-      const borderStyle = blocked ? 'dashed' : 'solid';
-      const bg = active ? '#151515' : '#fff';
-      const color = active ? '#fff' : (blocked ? '#8A8D90' : '#3C3F42');
-      const borderColor = active ? '#151515' : '#D2D2D2';
-      const subColor = active ? '#E8E8E8' : (blocked ? '#A8AAAD' : '#6A6E73');
-      return `<button class="btn${active ? ' btn--active' : ''}${blocked ? ' btn--blocked' : ''}"
-        data-action="${blocked ? 'noop' : 'selectStack'}" data-id="${esc(s.id)}"
-        style="background:${bg};color:${color};border:1px ${borderStyle} ${borderColor};flex-direction:column;align-items:flex-start;gap:2px;text-align:left;${blocked ? 'cursor:not-allowed;' : ''}">
-        <span style="display:flex;align-items:center;gap:6px">${esc(s.label)}</span>
-        <span style="font-size:11.5px;font-weight:400;white-space:nowrap;color:${subColor}">${esc(s.sub || '')}</span>
-      </button>`;
-    }).join('');
-    return `<div style="display:flex;flex-direction:column;gap:6px">
-      <span style="font-family:monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#8A8D90">${esc(g)}</span>
-      <div style="display:flex;gap:8px;flex-wrap:nowrap">${items}</div>
-    </div>`;
-  }).join('');
-
-  const hwHtml = (m.selectors.hardware || []).map(h => {
-    const active = h.id === state.hwId;
-    const rec = h.recommended && active;
-    return `<button class="btn${active ? ' btn--active' : ''}" data-action="selectHardware" data-id="${esc(h.id)}">
-      ${esc(h.label)}${h.recommended ? '<span style="font-family:monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:' + (rec ? '#85C957' : '#6A6E73') + ';font-weight:500;margin-left:6px">Recommended</span>' : ''}
-    </button>`;
-  }).join('');
-
-  const topoHtml = (m.selectors.topology || []).map(t => {
-    const key = [state.stackId, state.hwId, t.id, state.profileId].join('|');
-    const testView = m.views[key] || {};
-    const blocked = testView.blocked === true;
-    const active = t.id === state.topoId;
-    return `<button class="btn${active ? ' btn--active' : ''}${blocked ? ' btn--blocked' : ''}"
-      data-action="${blocked ? 'noop' : 'selectTopology'}" data-id="${esc(t.id)}"
-      ${blocked ? 'disabled' : ''}>
-      ${esc(t.label)}
-    </button>`;
-  }).join('');
-
-  const profileHtml = (m.selectors.profiles || []).map(p => {
-    const active = p.id === state.profileId;
-    return `<button class="btn${active ? ' btn--active' : ''}" data-action="selectProfile" data-id="${esc(p.id)}" style="text-align:left;flex-direction:column;align-items:flex-start;gap:2px">
-      <span>${esc(p.label)}</span>
-      ${p.sub ? '<span style="font-size:11.5px;font-weight:400;color:#6A6E73">' + esc(p.sub) + '</span>' : ''}
-    </button>`;
-  }).join('');
-
-  const specsHtml = (view.header_specs || []).length > 0 ? `<div class="spec-grid">
-    ${(view.header_specs || []).map(sp => `<div class="spec">
-      <dt>${esc(sp.k)}</dt>
-      <dd${sp.mono ? ' style="font-family:monospace"' : ''}>${esc(sp.v)}</dd>
-    </div>`).join('')}
-  </div>` : '';
-
-  return `<div class="selectors">
-    <div class="sel-row" style="border-bottom:1px solid #F0F0F0">
-      <span class="sel-label">Stack</span>
-      <div style="display:flex;gap:20px;flex-wrap:wrap;flex:1;min-width:0">${stackHtml}</div>
-    </div>
-    <div class="sel-row">
-      <span class="sel-label">Hardware</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${hwHtml}</div>
-    </div>
-    <div class="sel-row">
-      <span class="sel-label">Scope</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${topoHtml}</div>
-    </div>
-    <div class="sel-row">
-      <span class="sel-label">Workload</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${profileHtml}</div>
-    </div>
-    ${specsHtml}
-  </div>`;
-}
-
-function renderTabs() {
-  const tabs = [
-    { id: 'start', label: 'Quick start' },
-    { id: 'config', label: 'Configure' },
-    { id: 'bench', label: 'Benchmark' },
-    { id: 'airgap', label: 'Disconnected' },
-    { id: 'adv', label: 'Advanced' }
-  ];
-  return `<div class="tabs">
-    ${tabs.map(t => `<button class="tab${state.tab === t.id ? ' tab--active' : ''}" data-action="selectTab" data-id="${t.id}">
-      ${esc(t.label)}
-    </button>`).join('')}
-  </div>`;
-}
-
-function renderStart(view) {
-  if (view.blocked) {
-    return `<div class="banner--pending">${esc(view.reason)}</div>`;
+function drawer(name, body, downloadable = true) {
+  const details = node('details', null, 'drawer'); details.open = true;
+  const summary = node('summary', null, 'drawer__summary'); summary.append(node('strong', name));
+  const button = node('button', 'Copy'); button.type = 'button';
+  const entryId = state.entryId;
+  button.addEventListener('click', event => { event.preventDefault(); copy(body, button, entryId); });
+  summary.append(button);
+  if (downloadable) {
+    const save = node('button', 'Download'); save.type = 'button';
+    save.addEventListener('click', event => { event.preventDefault(); download({ name, body }); });
+    summary.append(save);
   }
-  const isEmpty = !view.quick_start || Object.keys(view.quick_start).length === 0;
-  if (isEmpty) {
-    return `<div class="banner">No data for this combination yet.</div>`;
-  }
-  // If we had data, render steps here (currently unreachable given current catalog)
-  return `<div class="banner">Quick start content would appear here.</div>`;
+  const code = node('pre', body, 'drawer__code');
+  details.append(summary, code); return details;
 }
-
-function renderConfigure(view) {
-  if (view.blocked) {
-    return `<div class="banner--pending">${esc(view.reason)}</div>`;
+function renderModelCard(model, entry) {
+  const card = node('div', null, 'model-card');
+  const presentation = model.metadata.presentation || {};
+  const icon = node('div', presentation.icon_letter || model.name[0] || '?');
+  icon.style.backgroundColor = /^#[a-f0-9]{6}$/i.test(presentation.icon_bg || '') ? presentation.icon_bg : '#4B2E83';
+  icon.style.color = '#fff'; icon.style.padding = '18px'; icon.style.borderRadius = '8px';
+  const content = node('div'); content.append(node('h1', model.name));
+  content.append(node('p', `Provider: ${presentation.provider || model.metadata.huggingface_id?.split('/')[0] || 'Unknown'}`));
+  if (entry) {
+    content.append(node('p', `Recipe maturity: ${entry.maturity}`));
+    if (entry.validation.label) content.append(node('p', entry.validation.label, 'pill--validated'));
+    content.append(node('p', `Engine: ${entry.engine.version || 'Unknown'} (${entry.engine.source || 'unresolved'})`));
+    if (entry.validation.qualification) content.append(node('p', `${entry.validation.qualification} Tested on ${entry.validation.tested_platform.stack} ${entry.validation.tested_platform.version}.`));
   }
-  const cfg = view.configure;
-  if (!cfg || Object.keys(cfg).length === 0) {
-    return `<div class="banner">No data for this combination yet.</div>`;
-  }
-
-  const imageTable = (cfg.image_table || []).length > 0 ? `
-    <h2 style="font-family:'Red Hat Display',sans-serif;font-size:18px;margin:0 0 12px">Container image</h2>
-    <table class="rht">
-      <thead><tr>
-        <th>Use</th><th>Reference</th><th>Status</th>
-      </tr></thead>
-      <tbody>
-        ${(cfg.image_table || []).map(r => `<tr>
-          <td>${esc(r[0])}</td>
-          <td style="font-family:monospace;font-size:12px">${esc(r[1])}</td>
-          <td>${esc(r[2])}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>` : '';
-
-  const artifactTable = (cfg.artifact_table || []).length > 0 ? `
-    <h2 style="font-family:'Red Hat Display',sans-serif;font-size:18px;margin:0 0 12px">Model artifact</h2>
-    <table class="rht">
-      <thead><tr>
-        <th>Artifact</th><th>Size</th><th>Revision</th><th>Use</th>
-      </tr></thead>
-      <tbody>
-        ${(cfg.artifact_table || []).map(r => `<tr>
-          <td style="font-family:monospace;font-size:12.5px">${esc(r[0])}</td>
-          <td style="font-family:monospace;font-size:12.5px">${esc(r[1])}</td>
-          <td style="font-family:monospace;font-size:11px">${esc(r[2])}</td>
-          <td style="font-size:13px">${esc(r[3])}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>` : '';
-
-  const flagsSection = (cfg.flags_rows || []).length > 0 ? `
-    <h2 style="font-family:'Red Hat Display',sans-serif;font-size:18px;margin:0 0 12px">vLLM arguments</h2>
-    ${/* trusted-HTML allow-list: flags_lede intentionally embeds <code>, kept raw */ ''}
-    ${cfg.flags_lede ? '<p style="font-size:14px;color:#3C3F42;margin:0 0 12px">' + cfg.flags_lede + '</p>' : ''}
-    ${cfg.vllm_serve ? `<details open class="drawer">
-      <summary class="drawer__summary">
-        <span style="font-family:monospace;font-size:12.5px;font-weight:600;white-space:nowrap">vllm serve</span>
-        <span style="font-size:12px;color:#6A6E73;flex:1">Standalone command</span>
-        <button data-action="copy" data-id="vllm-serve" style="font-family:monospace;font-size:10px;text-transform:uppercase;font-weight:600;color:${state.copiedId === 'vllm-serve' ? '#3D7317' : '#D2D2D2'};background:#fff;border:1px solid ${state.copiedId === 'vllm-serve' ? '#3D7317' : '#D2D2D2'};border-radius:3px;padding:4px 8px;cursor:pointer">${state.copiedId === 'vllm-serve' ? 'Copied' : 'Copy'}</button>
-      </summary>
-      <pre class="drawer__code" style="margin:0;white-space:pre">${esc(cfg.vllm_serve)}</pre>
-    </details>` : ''}
-    <table class="rht">
-      <thead><tr>
-        <th>Flag</th><th>Value</th><th>Why</th>
-      </tr></thead>
-      <tbody>
-        ${(cfg.flags_rows || []).map(f => `<tr>
-          <td style="font-family:monospace;font-size:12px">${esc(f.flag)}</td>
-          <td style="font-family:monospace;font-size:12px">${esc(f.value)}</td>
-          <td style="font-size:13px">${esc(f.why)}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
-    ${/* trusted-HTML allow-list: arg_note intentionally embeds <code>, kept raw */ ''}
-    ${cfg.arg_note ? '<div style="background:#FAFAFA;padding:10px 14px;font-size:13px;color:#3C3F42;margin:0 0 20px">' + cfg.arg_note + '</div>' : ''}` : '';
-
-  const manifestSection = cfg.manifest ? `
-    <h2 style="font-family:'Red Hat Display',sans-serif;font-size:18px;margin:0 0 12px">Manifest</h2>
-    <details open class="drawer">
-      <summary class="drawer__summary">
-        <span style="font-family:monospace;font-size:12.5px;font-weight:600;white-space:nowrap">${esc(cfg.manifest.name)}</span>
-        <span style="font-size:12px;color:#6A6E73;flex:1">RHOAI LLMInferenceService</span>
-        <button data-action="copy" data-id="manifest" style="font-family:monospace;font-size:10px;text-transform:uppercase;font-weight:600;color:${state.copiedId === 'manifest' ? '#3D7317' : '#D2D2D2'};background:#fff;border:1px solid ${state.copiedId === 'manifest' ? '#3D7317' : '#D2D2D2'};border-radius:3px;padding:4px 8px;cursor:pointer">${state.copiedId === 'manifest' ? 'Copied' : 'Copy'}</button>
-      </summary>
-      <pre class="drawer__code" style="margin:0;white-space:pre">${esc(cfg.manifest.body)}</pre>
-    </details>` : '';
-
-  return `<div style="background:#fff;border:1px solid #D2D2D2;border-radius:6px;padding:24px 28px;max-width:900px">
-    ${imageTable}
-    ${artifactTable}
-    ${flagsSection}
-    ${manifestSection}
-  </div>`;
+  card.append(icon, content); return card;
 }
-
-function renderBenchmark(view) {
-  if (view.blocked) {
-    return `<div class="banner--pending">${esc(view.reason)}</div>`;
+function renderSelectors() {
+  const result = node('div', null, 'selectors');
+  result.append(selector('Model', CATALOG.models.map(model => [model.id, model.name]), state.modelId, id => { chooseModel(id); updateUrl(); render(); }));
+  const entries = modelEntries();
+  for (const [key, label] of [['platform', 'Platform/version'], ['hardware', 'Accelerators'], ['scope', 'Scope'], ['workload_profile', 'Workload']]) {
+    const values = [...new Set(entries.map(entry => dimension(entry, key)))].sort();
+    if (values.length > 1 || key === 'platform') {
+      result.append(selector(label, [['', 'All'], ...values.map(value => [value, value])], state.filters[key] || '', value => selectFilter(key, value)));
+    }
   }
-  const bench = view.benchmark;
-  if (!bench || Object.keys(bench).length === 0) {
-    return `<div class="banner">No data for this combination yet.</div>`;
-  }
-
-  const provenanceHtml = bench.provenance ? `<div class="banner" style="margin-bottom:20px">${esc(bench.provenance)}</div>` : '';
-
-  const harnessDrawerHtml = bench.harness_drawer && bench.harness_drawer.code ? `
-    <h2 style="font-family:'Red Hat Display',sans-serif;font-size:18px;margin:0 0 10px">Harness</h2>
-    ${bench.harness_lede ? '<p style="font-size:14px;color:#3C3F42;margin:0 0 12px;max-width:70ch">' + esc(bench.harness_lede) + '</p>' : ''}
-    <details ${bench.harness_drawer.open ? 'open' : ''} class="drawer" style="margin-bottom:20px">
-      <summary class="drawer__summary">
-        <span style="font-family:monospace;font-size:12.5px;font-weight:600;white-space:nowrap">${esc(bench.harness_drawer.name)}</span>
-        <span style="font-size:12px;color:#6A6E73;flex:1">${esc(bench.harness_drawer.meta || '')}</span>
-        <button data-action="copy" data-id="bench" style="font-family:monospace;font-size:10px;text-transform:uppercase;font-weight:600;color:${state.copiedId === 'bench' ? '#3D7317' : '#D2D2D2'};background:#fff;border:1px solid ${state.copiedId === 'bench' ? '#3D7317' : '#D2D2D2'};border-radius:3px;padding:4px 8px;cursor:pointer">${state.copiedId === 'bench' ? 'Copied' : 'Copy'}</button>
-      </summary>
-      <pre class="drawer__code" style="margin:0;white-space:pre">${esc(bench.harness_drawer.code)}</pre>
-    </details>` : '';
-
-  const rowsHtml = (bench.rows || []).length > 0 ? `
-    <h2 style="font-family:'Red Hat Display',sans-serif;font-size:18px;margin:0 0 12px">Measured</h2>
-    <table class="rht">
-      <thead><tr>
-        <th>Load</th><th>TTFT</th><th>ITL</th><th>Throughput</th><th>Cache hit</th>
-      </tr></thead>
-      <tbody>
-        ${(bench.rows || []).map(r => `<tr>
-          <td style="font-size:12.5px">${esc(r.load || '')}</td>
-          <td style="font-family:monospace;font-size:12px">${esc(r.ttft || '')}</td>
-          <td style="font-family:monospace;font-size:12px">${esc(r.itl || '')}</td>
-          <td style="font-family:monospace;font-size:12px">${esc(r.tput || '')}</td>
-          <td style="font-family:monospace;font-size:12px">${esc(r.hit || '')}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>` : '';
-
-  const notesHtml = (bench.notes || []).length > 0 ? `
-    <h2 style="font-family:'Red Hat Display',sans-serif;font-size:18px;margin:0 0 12px">What to hold onto</h2>
-    <ul style="margin:0 0 20px;padding-left:20px;max-width:70ch;font-size:14px">
-      ${(bench.notes || []).map(n => `<li style="margin-bottom:8px">${esc(n)}</li>`).join('')}
-    </ul>` : '';
-
-  const issuesHtml = (bench.issues || []).length > 0 ? `
-    <h2 style="font-family:'Red Hat Display',sans-serif;font-size:18px;margin:0 0 12px">Known issues</h2>
-    <table class="rht">
-      <thead><tr>
-        <th>Issue</th><th>Impact</th><th>Mitigation</th>
-      </tr></thead>
-      <tbody>
-        ${(bench.issues || []).map(i => `<tr>
-          <td>${esc(i[0] || '')}</td>
-          <td>${esc(i[1] || '')}</td>
-          <td>${esc(i[2] || '')}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>` : '';
-
-  return `<div style="background:#fff;border:1px solid #D2D2D2;border-radius:6px;padding:24px 28px">
-    ${provenanceHtml}
-    ${harnessDrawerHtml}
-    ${rowsHtml}
-    ${notesHtml}
-    ${issuesHtml}
-  </div>`;
+  const matches = matchingEntries();
+  if (matches.length) result.append(selector('Recipe', matches.map(entry => [entry.id, `${entry.recipe_id} — ${platformKey(entry)}${entry.blocked ? ' (blocked)' : ''}`]), state.entryId, id => { state.entryId = id; updateUrl(); render(); }));
+  return result;
 }
-
-function renderDisconnected(view) {
-  if (view.blocked) {
-    return `<div class="banner--pending">${esc(view.reason)}</div>`;
+function renderConfigure(entry) {
+  const panel = node('div');
+  const inventory = entry.hardware.data.accelerators.count_per_node;
+  panel.append(table(['Property', 'Value'], [
+    ['Recipe', entry.recipe_id], ['Platform', platformKey(entry)], ['Hardware profile', `${entry.hardware.path} revision ${entry.hardware.revision}`],
+    ['Host inventory (per node)', `${inventory} accelerators`], ['Declared serving allocation (per replica)', `${entry.gpu_allocation.declared_gpus_per_replica} GPUs`],
+    ['Scope', entry.scope], ['Workload', entry.workload_profile], ['Optimization intent', entry.optimization_intent], ['Image', entry.serving.image],
+    ['Image kind', entry.serving.image_usage?.kind || 'Unclassified legacy image'], ['Custom image note', entry.serving.image_usage?.note || null]
+  ]));
+  panel.append(sourceLink(entry.source, 'Recipe source'), node('p', entry.command_note));
+  for (const [role, args] of Object.entries(entry.roles)) {
+    if (args.length) { panel.append(node('h2', `${role} arguments`)); panel.append(table(['Flag', 'Value', 'Why'], args.map(arg => [arg.flag, arg.value ?? null, arg.why]))); }
   }
-  const disc = view.disconnected;
-  if (!disc || Object.keys(disc).length === 0) {
-    return `<div class="banner">No data for this combination yet.</div>`;
+  for (const spec of entry.specs) panel.append(node('p', `${spec.label}: ${spec.state === 'resolved' ? JSON.stringify(spec.value) : 'Unverified source note — inspect final artifacts'} (${spec.source})`));
+  for (const artifact of entry.artifacts) {
+    panel.append(node('h2', artifact.kinds.join(', ')), sourceLink(artifact.source, 'Artifact source'), drawer(artifact.name, artifact.body));
   }
-  return `<div class="banner">Disconnected content would appear here.</div>`;
+  return panel;
 }
-
-function renderAdvanced(view) {
-  if (view.blocked) {
-    return `<div class="banner--pending">${esc(view.reason)}</div>`;
+function renderBenchmark(entry) {
+  const panel = node('div');
+  if (!entry.evidence.length) { panel.append(node('div', 'No committed benchmark evidence for this recipe', 'banner')); return panel; }
+  for (const item of entry.evidence) {
+    panel.append(node('h2', `Original run: ${item.run.run_id}`), sourceLink(item.source, 'Run source'), sourceLink(item.result_source, 'Result source'));
+    const environment = item.run.environment || {};
+    panel.append(table(['Original run attribution', 'Value'], [
+      ['Platform', environment.platform ? `${environment.platform.stack} ${environment.platform.version}` : null],
+      ['Engine', environment.vllm_version], ['Image', environment.image],
+      ['Hardware profile', item.run.hardware_profile], ['Profile revision when tested', item.run.hardware_profile_revision],
+      ['Scope', item.run.deployment_scope]
+    ]));
+    if (entry.validation.run_id !== item.run.run_id) panel.append(node('p', 'Historical evidence for this recipe; equivalence to the selected serving configuration has not been established.'));
+    panel.append(table(['Metric', 'Value / explicit units and statistics'], Object.entries(item.result.metrics)));
+    if (item.run.command) panel.append(drawer('benchmark-command.sh', item.run.command));
+    panel.append(drawer('run.yaml', item.run_body), drawer('result.json', item.result_body));
   }
-  const adv = view.advanced;
-  if (!adv || Object.keys(adv).length === 0) {
-    return `<div class="banner">No data for this combination yet.</div>`;
+  return panel;
+}
+function renderNotes(entry, quickstart = false) {
+  const panel = node('div');
+  if (!entry.notes) return node('p', 'No optional notes supplied.');
+  panel.append(sourceLink(entry.notes_source, 'Notes source'));
+  panel.append(node('p', 'Contributor notes are source prose, not measured benchmark evidence; final deployment artifacts remain authoritative.'));
+  if (quickstart) {
+    for (const step of entry.notes.quickstart || []) panel.append(node('h2', step.step), node('p', step.detail));
+  } else {
+    panel.append(drawer('recipe-notes.json', JSON.stringify(entry.notes, null, 2)));
   }
-  return `<div class="banner">Advanced content would appear here.</div>`;
+  return panel;
 }
-
-function renderPanel(view) {
-  let content = '';
-  if (state.tab === 'start') content = renderStart(view);
-  else if (state.tab === 'config') content = renderConfigure(view);
-  else if (state.tab === 'bench') content = renderBenchmark(view);
-  else if (state.tab === 'airgap') content = renderDisconnected(view);
-  else if (state.tab === 'adv') content = renderAdvanced(view);
-
-  return `<div class="panel">${content}</div>`;
+function renderTabs(entry) {
+  const tabs = [['config', 'Configure'], ['bench', 'Benchmark']];
+  if (entry.notes?.quickstart?.length) tabs.unshift(['start', 'Quick start']);
+  if (entry.notes) tabs.push(['notes', 'Notes']);
+  if (!tabs.some(([id]) => id === state.tab)) state.tab = 'config';
+  const result = node('div', null, 'tabs');
+  for (const [id, label] of tabs) {
+    const button = node('button', label, `tab${state.tab === id ? ' tab--active' : ''}`);
+    button.dataset.focusKey = `tab:${id}`;
+    button.addEventListener('click', () => { state.tab = id; render(); }); result.append(button);
+  }
+  return result;
 }
-
 function render() {
-  if (!CATALOG || !state.modelId) return;
-  const m = currentModel();
-  const view = currentView(m);
-
-  const html = `
-    <div style="padding:24px 40px 0;flex:1;display:flex;flex-direction:column;max-width:1100px;width:100%;margin:0 auto">
-      ${renderBreadcrumb(m)}
-      ${renderModelCard(m)}
-      ${renderSelectors(m, view)}
-      ${renderTabs()}
-      ${renderPanel(view)}
-    </div>
-  `;
-
-  document.getElementById('app').innerHTML = html;
+  const focusKey = app.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+  function restoreFocus() {
+    if (!focusKey) return;
+    const controls = [...app.querySelectorAll('[data-focus-key]')];
+    // A removed tab returns to Configure; a removed selector returns to Recipe
+    // or Model. Do not steal focus on initial load or from outside the app.
+    const target = controls.find(control => control.dataset.focusKey === focusKey)
+      || (focusKey.startsWith('tab:') && controls.find(control => control.dataset.focusKey === 'tab:config'))
+      || controls.find(control => control.dataset.focusKey === 'selector:Recipe')
+      || controls.find(control => control.dataset.focusKey === 'selector:Model');
+    if (target) target.focus({ preventScroll: true });
+    else { app.tabIndex = -1; app.focus({ preventScroll: true }); }
+  }
+  app.replaceChildren();
+  if (!CATALOG.models.length) { app.append(node('div', 'No models are available.', 'banner')); restoreFocus(); return; }
+  const model = currentModel(), entry = currentView();
+  const layout = node('div'); layout.style.cssText = 'padding:24px 40px;max-width:1100px;margin:0 auto;width:100%';
+  layout.append(node('div', `AI Hub / Models / Catalog / ${model.name}`, 'crumb'), renderModelCard(model, entry), renderSelectors());
+  if (!entry) layout.append(node('div', 'No recipes match this model and selection.', 'banner'));
+  else if (entry.blocked) layout.append(node('div', entry.reason || 'This platform entry is blocked.', 'banner--pending'));
+  else {
+    layout.append(renderTabs(entry));
+    const panel = node('div', null, 'panel');
+    panel.append(state.tab === 'bench' ? renderBenchmark(entry) : state.tab === 'notes' ? renderNotes(entry) : state.tab === 'start' ? renderNotes(entry, true) : renderConfigure(entry));
+    layout.append(panel);
+  }
+  layout.append(node('p', `Build: ${CATALOG.build.source_sha || 'local'}${CATALOG.build.dirty ? ' — uncommitted local preview' : ''}`));
+  app.append(layout);
+  restoreFocus();
 }
-
 async function boot() {
   try {
     const response = await fetch('./catalog.json');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     CATALOG = await response.json();
-    const wanted = new URLSearchParams(location.search).get('model');
-    const m = CATALOG.models.find(x => x.id === wanted) || CATALOG.models[0];
-    state.modelId = m.id;
-    state.stackId = m.default.stack;
-    state.hwId = m.default.hw;
-    state.topoId = m.default.topo;
-    state.profileId = m.default.profile;
-    wireDelegation();
-    render();
-  } catch (err) {
-    document.getElementById('app').innerHTML = `<div style="padding:40px;color:#A30000">Failed to load catalog: ${esc(err.message)}</div>`;
-  }
+    if (CATALOG.schema_version !== 2 || !Array.isArray(CATALOG.models) || !Array.isArray(CATALOG.entries)) throw new Error('Unsupported catalog contract');
+    const query = new URLSearchParams(location.search);
+    chooseModel(query.get('model'), query.get('entry')); render();
+    window.addEventListener('popstate', () => { const params = new URLSearchParams(location.search); chooseModel(params.get('model'), params.get('entry')); render(); });
+  } catch (error) { app.replaceChildren(node('div', `Failed to load catalog: ${error.message}. Preview the generated site over HTTP, not file://.`, 'banner')); }
 }
-
 document.addEventListener('DOMContentLoaded', boot);
