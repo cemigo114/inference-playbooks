@@ -15,8 +15,30 @@ function currentModel() { return CATALOG.models.find(model => model.id === state
 function modelEntries() { return CATALOG.entries.filter(entry => entry.model_id === state.modelId); }
 function currentView() { return modelEntries().find(entry => entry.id === state.entryId); }
 function platformKey(entry) { return `${entry.platform.stack} ${entry.platform.version}`; }
+function workloadLabel(value) {
+  return { 'guidellm-8k1k': '8k/1k', 'aiperf-agentx-128k': 'Agentic workload (128K)', 'aiperf-agentx-unlimited-context': 'Agentic workload (unlimited)' }[value] || value;
+}
+function recipeLabel(entry) {
+  const accelerators = entry.hardware.data.accelerators;
+  return `${workloadLabel(entry.workload_profile)} — ${entry.gpu_allocation.declared_gpus_per_replica ?? 'Unknown'} ${accelerators.model} GPUs per replica (${accelerators.count_per_node} per host) — ${entry.scope} — ${platformKey(entry)}`;
+}
+function renderRecipeTechnical(entry) {
+  const technical = node('details', null, 'recipe-technical');
+  technical.append(node('summary', 'Technical recipe identity and source rationale'), node('p', `Recipe ID: ${entry.recipe_id}`), node('p', `Platform entry: ${entry.id} — ${platformKey(entry)}`), sourceLink(entry.source, 'Recipe source'));
+  const profile = entry.notes?.profile || {};
+  const rationale = [profile.label, profile.headline, entry.notes?.default_stance].filter(Boolean);
+  if (rationale.length) {
+    technical.append(node('p', 'Selection rationale — source prose, not a measured recommendation.'), sourceLink(entry.notes_source, 'Selection rationale source'));
+    rationale.forEach(text => technical.append(node('p', text)));
+  } else technical.append(node('p', 'No selection rationale supplied'));
+  return technical;
+}
 function dimension(entry, key) {
-  return key === 'platform' ? platformKey(entry) : key === 'hardware' ? entry.hardware.accelerator_key : entry[key];
+  if (key === 'platform') return { vllm: 'vllm', rhoai: 'rhoai/rhaii', rhaii: 'rhoai/rhaii', 'llm-d': 'llm-d' }[entry.platform.stack] || null;
+  if (key === 'version') return entry.platform.version;
+  if (key === 'gpu_model') return String(entry.hardware.data.accelerators.model || '').toUpperCase();
+  if (key === 'workload') return { 'guidellm-8k1k': '8k1k', 'aiperf-agentx-128k': 'agentic', 'aiperf-agentx-unlimited-context': 'agentic' }[entry.workload_profile] || null;
+  return entry[key];
 }
 function matchingEntries() {
   return modelEntries().filter(entry => Object.entries(state.filters).every(([key, value]) => !value || dimension(entry, key) === value));
@@ -37,32 +59,49 @@ function chooseModel(id, requestedEntry = null) {
 }
 function selectFilter(key, value) {
   state.filters[key] = value;
-  // Preserve the chosen dimension, relaxing other filters only if necessary.
-  for (const other of ['platform', 'hardware', 'scope', 'workload_profile']) {
-    if (matchingEntries().length) break;
-    if (other !== key) state.filters[other] = '';
-  }
+  if (key === 'platform') state.filters.version = '';
+  // Filters are strict: an unavailable combination remains visible as no results.
   const matches = matchingEntries();
   if (!matches.some(entry => entry.id === state.entryId)) {
     state.entryId = matches.find(entry => !entry.blocked)?.id || matches[0]?.id || null;
   }
   updateUrl(); render();
 }
-function selector(label, options, selected, change) {
-  const row = node('div', null, 'sel-row');
-  const title = node('label', label, 'sel-label');
-  const select = node('select');
-  select.setAttribute('aria-label', label);
-  select.dataset.focusKey = `selector:${label}`;
+function compareVersions(left, right) {
+  // Display ordering only: keep every exact source identity, including opaque labels.
+  const pattern = /^v?(\d+)\.(\d+)(?:\.(\d+))?(?:-ea(\d+))?$/i;
+  const a = left.match(pattern), b = right.match(pattern);
+  if (a && b) {
+    for (const index of [1, 2, 3]) {
+      const leftNumber = BigInt(a[index] || '0'), rightNumber = BigInt(b[index] || '0');
+      if (leftNumber !== rightNumber) return leftNumber < rightNumber ? -1 : 1;
+    }
+    if (a[4] === undefined && b[4] !== undefined) return 1;
+    if (a[4] !== undefined && b[4] === undefined) return -1;
+    const leftEA = BigInt(a[4] || '0'), rightEA = BigInt(b[4] || '0');
+    if (leftEA !== rightEA) return leftEA < rightEA ? -1 : 1;
+  } else if (a || b) return a ? -1 : 1;
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+function filterOptions(key, label, options, disabled = false) {
+  const group = node('fieldset', null, 'filter-options');
+  group.disabled = disabled;
+  group.dataset.filter = key;
+  group.setAttribute('role', 'radiogroup'); group.setAttribute('aria-label', label);
+  group.append(node('legend', label));
   for (const [value, text] of options) {
-    const option = node('option', text);
-    option.value = value;
-    option.selected = value === selected;
-    select.append(option);
+    const selected = (state.filters[key] || '') === value;
+    const unavailable = key === 'platform' && value !== '' && !modelEntries().some(entry => dimension(entry, 'platform') === value);
+    const option = node('label', null, `filter-option${selected ? ' filter-option--selected' : ''}${unavailable ? ' filter-option--unavailable' : ''}`);
+    const radio = node('input');
+    radio.type = 'radio'; radio.name = `catalog-filter-${key}`; radio.value = value; radio.checked = selected;
+    radio.disabled = unavailable;
+    if (unavailable) option.title = 'No recipes for this platform family and selected model.';
+    radio.dataset.focusKey = `filter:${key}:${value}`;
+    radio.addEventListener('change', () => { if (!radio.disabled && !group.disabled) selectFilter(key, radio.value); });
+    option.append(radio, node('span', text)); group.append(option);
   }
-  select.addEventListener('change', () => change(select.value));
-  row.append(title, select);
-  return row;
+  return group;
 }
 function sourceLink(source, label = 'Source') {
   if (!source) return node('span', 'Source unavailable');
@@ -119,40 +158,83 @@ function drawer(name, body, downloadable = true) {
 function renderModelCard(model, entry) {
   const card = node('div', null, 'model-card');
   const presentation = model.metadata.presentation || {};
-  const icon = node('div', presentation.icon_letter || model.name[0] || '?');
+  const icon = node('div', presentation.icon_letter || (model.name || model.id)[0] || '?');
   icon.style.backgroundColor = /^#[a-f0-9]{6}$/i.test(presentation.icon_bg || '') ? presentation.icon_bg : '#4B2E83';
   icon.style.color = '#fff'; icon.style.padding = '18px'; icon.style.borderRadius = '8px';
-  const content = node('div'); content.append(node('h1', model.name));
-  content.append(node('p', `Provider: ${presentation.provider || model.metadata.huggingface_id?.split('/')[0] || 'Unknown'}`));
+  const content = node('div'); content.append(node('h1', model.name || model.id));
+  const meta = node('div', null, 'model-meta');
+  meta.append(node('span', `Provider: ${presentation.provider || model.metadata.huggingface_id?.split('/')[0] || 'Unknown'}`));
   if (entry) {
-    content.append(node('p', `Recipe maturity: ${entry.maturity}`));
-    if (entry.validation.label) content.append(node('p', entry.validation.label, 'pill--validated'));
-    content.append(node('p', `Engine: ${entry.engine.version || 'Unknown'} (${entry.engine.source || 'unresolved'})`));
-    if (entry.validation.qualification) content.append(node('p', `${entry.validation.qualification} Tested on ${entry.validation.tested_platform.stack} ${entry.validation.tested_platform.version}.`));
+    meta.append(node('span', `Recipe maturity: ${entry.maturity}`));
+    if (entry.validation.label) meta.append(node('span', entry.validation.label, 'pill--validated'));
+    meta.append(node('span', `Engine: ${entry.engine.version || 'Unknown'} (${entry.engine.source || 'unresolved'})`));
   }
+  content.append(meta);
+  if (entry?.validation.qualification) content.append(node('p', `${entry.validation.qualification} Tested on ${entry.validation.tested_platform.stack} ${entry.validation.tested_platform.version}.`));
   card.append(icon, content); return card;
 }
 function renderSelectors() {
   const result = node('div', null, 'selectors');
-  result.append(selector('Model', CATALOG.models.map(model => [model.id, model.name]), state.modelId, id => { chooseModel(id); updateUrl(); render(); }));
-  const entries = modelEntries();
-  for (const [key, label] of [['platform', 'Platform/version'], ['hardware', 'Accelerators'], ['scope', 'Scope'], ['workload_profile', 'Workload']]) {
-    const values = [...new Set(entries.map(entry => dimension(entry, key)))].sort();
-    if (values.length > 1 || key === 'platform') {
-      result.append(selector(label, [['', 'All'], ...values.map(value => [value, value])], state.filters[key] || '', value => selectFilter(key, value)));
-    }
+  const models = node('fieldset', null, 'model-options');
+  models.setAttribute('role', 'radiogroup');
+  models.setAttribute('aria-label', 'Models');
+  models.append(node('legend', 'Models'));
+  for (const model of CATALOG.models) {
+    const selected = model.id === state.modelId;
+    const label = node('label', null, `model-option${selected ? ' model-option--selected' : ''}`);
+    const radio = node('input');
+    radio.type = 'radio'; radio.name = 'catalog-model'; radio.value = model.id;
+    radio.checked = selected;
+    radio.setAttribute('aria-label', model.name || model.id);
+    radio.dataset.focusKey = `model:${model.id}`;
+    radio.addEventListener('change', () => { chooseModel(radio.value); updateUrl(); render(); });
+    label.append(radio, node('span', model.name || model.id, 'model-option__name'), node('span', model.id, 'model-option__id'));
+    models.append(label);
   }
+  result.append(models);
+  result.append(node('p', 'Choose a workload, then hardware and deployment scope. Workload names describe source benchmark profiles, not maximum runtime guarantees.'));
+  const entries = modelEntries();
+  result.append(filterOptions('platform', 'Platform', [['', 'All'], ['vllm', 'vLLM'], ['rhoai/rhaii', 'RHOAI / RHAII'], ['llm-d', 'llm-d']]));
+  const family = state.filters.platform || '';
+  const versions = family ? [...new Set(entries.filter(entry => dimension(entry, 'platform') === family).map(entry => entry.platform.version))].sort(compareVersions) : [];
+  result.append(filterOptions('version', 'Version', [['', 'All versions'], ...versions.map(value => [value, value])], !versions.length));
+  if (family && !versions.length) result.append(node('p', 'No versions are available for this platform family and model.', 'platform-unavailable'));
+  result.append(filterOptions('gpu_model', 'GPU model', [['', 'All'], ...['B300', 'B200', 'H200', 'H100'].map(value => [value, value])]));
+  const pair = node('div', null, 'filter-pair');
+  pair.append(filterOptions('scope', 'Scope', [['', 'All'], ['single-node', 'Single-node'], ['multi-node', 'Multi-node']]),
+    filterOptions('workload', 'Workload', [['', 'All'], ['8k1k', '8k/1k'], ['agentic', 'Agentic workload']]));
+  result.append(pair);
   const matches = matchingEntries();
-  if (matches.length) result.append(selector('Recipe', matches.map(entry => [entry.id, `${entry.recipe_id} — ${platformKey(entry)}${entry.blocked ? ' (blocked)' : ''}`]), state.entryId, id => { state.entryId = id; updateUrl(); render(); }));
+  if (matches.length) {
+    const recipes = node('fieldset', null, 'recipe-options');
+    recipes.setAttribute('role', 'radiogroup'); recipes.setAttribute('aria-label', 'Recipes');
+    recipes.append(node('legend', 'Recipes'));
+    for (const entry of matches) {
+      const selected = entry.id === state.entryId;
+      const label = node('label', null, `recipe-option${selected ? ' recipe-option--selected' : ''}`);
+      const radio = node('input');
+      radio.type = 'radio'; radio.name = 'catalog-recipe'; radio.value = entry.id; radio.checked = selected;
+      radio.dataset.focusKey = `recipe:${entry.id}`;
+      radio.setAttribute('aria-label', recipeLabel(entry));
+      radio.addEventListener('change', () => { state.entryId = radio.value; updateUrl(); render(); });
+      label.append(radio, node('span', workloadLabel(entry.workload_profile), 'recipe-option__name'),
+        node('span', `${entry.gpu_allocation.declared_gpus_per_replica ?? 'Unknown'} ${entry.hardware.data.accelerators.model} GPUs per replica (declared)`, 'recipe-option__allocation'),
+        node('span', `${entry.scope} — ${platformKey(entry)}`, 'recipe-option__platform'),
+        node('span', `${entry.maturity}${entry.blocked ? ' — blocked' : ''}`, 'recipe-option__maturity'));
+      recipes.append(label);
+    }
+    result.append(recipes);
+  }
   return result;
 }
 function renderConfigure(entry) {
   const panel = node('div');
+  panel.append(renderRecipeTechnical(entry));
   const inventory = entry.hardware.data.accelerators.count_per_node;
   panel.append(table(['Property', 'Value'], [
-    ['Recipe', entry.recipe_id], ['Platform', platformKey(entry)], ['Hardware profile', `${entry.hardware.path} revision ${entry.hardware.revision}`],
+    ['Platform', platformKey(entry)], ['Hardware profile', `${entry.hardware.path} revision ${entry.hardware.revision}`],
     ['Host inventory (per node)', `${inventory} accelerators`], ['Declared serving allocation (per replica)', `${entry.gpu_allocation.declared_gpus_per_replica} GPUs`],
-    ['Scope', entry.scope], ['Workload', entry.workload_profile], ['Optimization intent', entry.optimization_intent], ['Image', entry.serving.image],
+    ['Scope', entry.scope], ['Workload', workloadLabel(entry.workload_profile)], ['Optimization intent (declared, not a measurement)', entry.optimization_intent], ['Parallelism', entry.gpu_allocation.parallelism], ['Image', entry.serving.image],
     ['Image kind', entry.serving.image_usage?.kind || 'Unclassified legacy image'], ['Custom image note', entry.serving.image_usage?.note || null]
   ]));
   panel.append(sourceLink(entry.source, 'Recipe source'), node('p', entry.command_note));
@@ -186,6 +268,11 @@ function renderBenchmark(entry) {
 }
 function renderNotes(entry, quickstart = false) {
   const panel = node('div');
+  if (quickstart && !entry.notes?.quickstart?.length) {
+    panel.append(node('p', 'Quickstart notes have not been supplied for this recipe.'),
+      node('p', 'Examples for future prerequisite notes, not requirements for this recipe: PVC access mode (RWO/RWX), weights pre-download, secrets/access, required operators/networking.'));
+    return panel;
+  }
   if (!entry.notes) return node('p', 'No optional notes supplied.');
   panel.append(sourceLink(entry.notes_source, 'Notes source'));
   panel.append(node('p', 'Contributor notes are source prose, not measured benchmark evidence; final deployment artifacts remain authoritative.'));
@@ -197,8 +284,7 @@ function renderNotes(entry, quickstart = false) {
   return panel;
 }
 function renderTabs(entry) {
-  const tabs = [['config', 'Configure'], ['bench', 'Benchmark']];
-  if (entry.notes?.quickstart?.length) tabs.unshift(['start', 'Quick start']);
+  const tabs = [['start', 'Quick start'], ['config', 'Configuration'], ['bench', 'Benchmark']];
   if (entry.notes) tabs.push(['notes', 'Notes']);
   if (!tabs.some(([id]) => id === state.tab)) state.tab = 'config';
   const result = node('div', null, 'tabs');
@@ -214,20 +300,20 @@ function render() {
   function restoreFocus() {
     if (!focusKey) return;
     const controls = [...app.querySelectorAll('[data-focus-key]')];
-    // A removed tab returns to Configure; a removed selector returns to Recipe
-    // or Model. Do not steal focus on initial load or from outside the app.
+    // A removed tab returns to Configure; a removed control returns to the selected recipe
+    // or the selected model radio. Do not steal focus on initial load or from outside the app.
     const target = controls.find(control => control.dataset.focusKey === focusKey)
       || (focusKey.startsWith('tab:') && controls.find(control => control.dataset.focusKey === 'tab:config'))
-      || controls.find(control => control.dataset.focusKey === 'selector:Recipe')
-      || controls.find(control => control.dataset.focusKey === 'selector:Model');
+      || controls.find(control => control.dataset.focusKey === `recipe:${state.entryId}`)
+      || controls.find(control => control.dataset.focusKey === `model:${state.modelId}`);
     if (target) target.focus({ preventScroll: true });
     else { app.tabIndex = -1; app.focus({ preventScroll: true }); }
   }
   app.replaceChildren();
   if (!CATALOG.models.length) { app.append(node('div', 'No models are available.', 'banner')); restoreFocus(); return; }
   const model = currentModel(), entry = currentView();
-  const layout = node('div'); layout.style.cssText = 'padding:24px 40px;max-width:1100px;margin:0 auto;width:100%';
-  layout.append(node('div', `AI Hub / Models / Catalog / ${model.name}`, 'crumb'), renderModelCard(model, entry), renderSelectors());
+  const layout = node('div', null, 'catalog-layout');
+  layout.append(node('div', `AI Hub / Models / Catalog / ${model.name || model.id}`, 'crumb'), renderModelCard(model, entry), renderSelectors());
   if (!entry) layout.append(node('div', 'No recipes match this model and selection.', 'banner'));
   else if (entry.blocked) layout.append(node('div', entry.reason || 'This platform entry is blocked.', 'banner--pending'));
   else {
