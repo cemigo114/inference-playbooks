@@ -240,7 +240,7 @@ code {
   letter-spacing: .1em;
   text-transform: uppercase;
   color: #6A6E73;
-  width: 84px;
+  width: 132px;
   flex: none;
   padding-top: 10px;
 }
@@ -461,4 +461,71 @@ code {
   padding: 1px 6px;
   border-radius: 2px;
   flex: none;
+}
+
+/* Keep catalog content inside its shell without clipping source text. */
+#app {
+  overflow-wrap: anywhere;
+}
+
+.model-card > div,
+.selectors,
+.sel-row,
+.panel {
+  min-width: 0;
+}
+
+.model-card > div {
+  max-width: 100%;
+}
+
+.sel-row select {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.drawer__summary {
+  flex-wrap: wrap;
+}
+
+.drawer__summary strong {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.rht th,
+.rht td {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .nav {
+    gap: 12px;
+    padding: 0 16px;
+  }
+
+  .nav > nav,
+  .nav > div:last-child {
+    flex-shrink: 0;
+  }
+
+  .nav > div:first-of-type {
+    flex: 0 !important;
+  }
+
+  .nav > input {
+    width: auto !important;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .sel-label {
+    width: 100%;
+    padding-top: 0;
+  }
+
+  .sel-row select {
+    flex-basis: 100%;
+  }
 }

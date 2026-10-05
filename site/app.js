@@ -53,6 +53,7 @@ function selector(label, options, selected, change) {
   const title = node('label', label, 'sel-label');
   const select = node('select');
   select.setAttribute('aria-label', label);
+  select.dataset.focusKey = `selector:${label}`;
   for (const [value, text] of options) {
     const option = node('option', text);
     option.value = value;
@@ -203,13 +204,27 @@ function renderTabs(entry) {
   const result = node('div', null, 'tabs');
   for (const [id, label] of tabs) {
     const button = node('button', label, `tab${state.tab === id ? ' tab--active' : ''}`);
+    button.dataset.focusKey = `tab:${id}`;
     button.addEventListener('click', () => { state.tab = id; render(); }); result.append(button);
   }
   return result;
 }
 function render() {
+  const focusKey = app.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+  function restoreFocus() {
+    if (!focusKey) return;
+    const controls = [...app.querySelectorAll('[data-focus-key]')];
+    // A removed tab returns to Configure; a removed selector returns to Recipe
+    // or Model. Do not steal focus on initial load or from outside the app.
+    const target = controls.find(control => control.dataset.focusKey === focusKey)
+      || (focusKey.startsWith('tab:') && controls.find(control => control.dataset.focusKey === 'tab:config'))
+      || controls.find(control => control.dataset.focusKey === 'selector:Recipe')
+      || controls.find(control => control.dataset.focusKey === 'selector:Model');
+    if (target) target.focus({ preventScroll: true });
+    else { app.tabIndex = -1; app.focus({ preventScroll: true }); }
+  }
   app.replaceChildren();
-  if (!CATALOG.models.length) { app.append(node('div', 'No models are available.', 'banner')); return; }
+  if (!CATALOG.models.length) { app.append(node('div', 'No models are available.', 'banner')); restoreFocus(); return; }
   const model = currentModel(), entry = currentView();
   const layout = node('div'); layout.style.cssText = 'padding:24px 40px;max-width:1100px;margin:0 auto;width:100%';
   layout.append(node('div', `AI Hub / Models / Catalog / ${model.name}`, 'crumb'), renderModelCard(model, entry), renderSelectors());
@@ -223,6 +238,7 @@ function render() {
   }
   layout.append(node('p', `Build: ${CATALOG.build.source_sha || 'local'}${CATALOG.build.dirty ? ' — uncommitted local preview' : ''}`));
   app.append(layout);
+  restoreFocus();
 }
 async function boot() {
   try {
