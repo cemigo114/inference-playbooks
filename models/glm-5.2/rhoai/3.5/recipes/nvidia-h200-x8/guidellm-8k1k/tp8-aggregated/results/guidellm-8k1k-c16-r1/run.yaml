@@ -28,6 +28,6 @@ environment:
   cuda_version: "12.4"
   driver_version: "550.54.15"
 artifacts:
-  - name: raw_output
-    type: guidellm_json
-    description: GuideLLM benchmark output JSON
+  - type: raw-output
+    path: result.json
+    description: GuideLLM benchmark normalized result (raw output not committed)

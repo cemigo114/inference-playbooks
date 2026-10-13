@@ -6,3 +6,4 @@ kubeconfig*.yaml
 temp/
 samples-shared-by-yuchen/
 site/catalog.json
+tools/__pycache__/
