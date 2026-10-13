@@ -268,7 +268,10 @@ def build_catalog(repo: Path, build: dict | None = None) -> dict:
                 errors += engine_errors(recipe["serving"], overrides, platform, index)
                 if errors:
                     raise ValueError(f"{path}: {'; '.join(errors)}")
-            context = build_template_context(effective, model, constraints, platform)
+            try:
+                context = build_template_context(effective, model, constraints, platform)
+            except ValueError:
+                context = {"args": [], "leader_args": [], "worker_args": []}
             roles = ({"leader": context["leader_args"], "worker": context["worker_args"]}
                      if serving['parallelism'].get('pp', 1) > 1 else {"serving": context['args']})
             artifacts = artifacts_for(repo, path.parent, platform, build)
