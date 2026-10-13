@@ -7,3 +7,4 @@ temp/
 samples-shared-by-yuchen/
 site/catalog.json
 tools/__pycache__/
+.build/
