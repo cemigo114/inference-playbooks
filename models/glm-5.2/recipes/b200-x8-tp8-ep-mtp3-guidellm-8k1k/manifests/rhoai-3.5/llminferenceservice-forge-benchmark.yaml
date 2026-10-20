@@ -1,5 +1,7 @@
 apiVersion: serving.kserve.io/v1alpha2
 kind: LLMInferenceService
+# Forge's runner resolves the model-server endpoint and adds port 8000 itself.
+# Keep Gateway routing out of this benchmark-only variant.
 metadata:
   labels:
     app.kubernetes.io/component: aggregated-b200
@@ -11,17 +13,12 @@ spec:
   baseRefs:
   - name: v3-5-0-kserve-config-llm-template
   - name: v3-5-0-kserve-config-llm-single-node-template-nvidia-cuda
-  - name: v3-5-0-kserve-config-llm-scheduler
-  - name: v3-5-0-kserve-config-llm-router-route
   model:
     name: RedHatAI/GLM-5.2-NVFP4-FP8
     uri: pvc://glm-5-2-hf-cache
   parallelism:
     tensor: 8
   replicas: 1
-  router:
-    route: {}
-    scheduler: {}
   storageInitializer:
     enabled: false
   template:

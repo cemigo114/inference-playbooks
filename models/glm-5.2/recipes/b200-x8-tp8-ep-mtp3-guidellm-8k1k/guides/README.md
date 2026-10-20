@@ -43,10 +43,12 @@ platform for a namespace; do not apply both as concurrent services there.
 
 ### Prepopulate the HF cache
 
-Both serving artifacts already mount `glm-5-2-hf-cache` at
+The RHOAI serving manifests and Forge benchmark manifest mount
+`glm-5-2-hf-cache` at
 `/var/cache/huggingface` as `HF_HUB_CACHE`. Before the first run, populate that
 claim with the [download Job](../../../model-ops/download-nvfp4-hf-cache.yaml).
-It uses the same model ID and the `llm-d-hf-token` Secret (`HF_TOKEN`). The
+It downloads `hf://RedHatAI/GLM-5.2-NVFP4-FP8` into this PVC using the
+`llm-d-hf-token` Secret (`HF_TOKEN`). The
 [example PVC](../../../model-ops/glm52-hf-cache-example.yaml) requests 1 TiB
 with `ReadWriteOnce` and uses the cluster's default storage class; configure it
 for the target B200 storage. The inspected model snapshot was about 447 GB
