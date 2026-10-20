@@ -28,19 +28,54 @@ platform for a namespace; do not apply both as concurrent services there.
   access to the checkpoint. Use an approved credential provisioning path;
   never commit tokens.
 - Writable PVCs `glm-5-2-hf-cache` and `glm-5-2-jit-cache` in that namespace.
-  Choose capacities for checkpoint/download headroom and JIT artifacts after
-  inspecting the checkpoint. Capacities, access modes and storage class were
-  not supplied. Ensure the claims can mount on the B200 node, filesystem
-  permissions allow the admitted pod UID to write, and storage can tolerate
-  rolling replacement pods. Reuse requires serial deployment if access or
-  cache writer constraints do not permit overlap.
+  Choose capacity, access mode and storage class for the target cluster, and
+  ensure both claims mount on the B200 node and are writable by the admitted
+  pod UID. The HF cache is prepopulated before deployment; the JIT cache is
+  filled at runtime.
 - Container-registry and Hugging Face access, plus PyPI/package-host access
-  for the startup dependency. An empty PVC is a cache, not a prepopulated
-  local model path. This configuration is not disconnected-ready.
+  for the startup dependency. The runtime keeps `HF_HUB_OFFLINE=0`; a warmed
+  cache avoids transferring the full checkpoint again while its model revision
+  is current, but this configuration is not disconnected-ready.
 - Inspect namespace SCC admission for both the upstream init image and main
   image. No SCC grants or privileged access are created by this recipe.
 
 ## Prepare and deploy
+
+### Prepopulate the HF cache
+
+Both serving artifacts already mount `glm-5-2-hf-cache` at
+`/var/cache/huggingface` as `HF_HUB_CACHE`. Before the first run, populate that
+claim with the [download Job](../../../model-ops/download-nvfp4-hf-cache.yaml).
+It uses the same model ID and the `llm-d-hf-token` Secret (`HF_TOKEN`). The
+[example PVC](../../../model-ops/glm52-hf-cache-example.yaml) requests 1 TiB
+with `ReadWriteOnce` and uses the cluster's default storage class; configure it
+for the target B200 storage. The inspected model snapshot was about 447 GB
+[at this Hub revision](https://huggingface.co/RedHatAI/GLM-5.2-NVFP4-FP8/tree/68629bdc58d2aa3398f4a32848839be938aad785),
+but the recipe follows the model's default revision, so confirm current size,
+quota, access and permissions before creating the claim. For node-local
+storage, schedule the Job on the B200 node that will serve the model.
+
+From the repository root, check for the claim first. Reuse it if it is Bound,
+large enough and mountable by the serving pod. Apply the example PVC only if
+the claim does not exist:
+
+```bash
+export NAMESPACE=your-namespace
+oc get -n "${NAMESPACE}" pvc glm-5-2-hf-cache
+# Run only if the PVC is missing.
+oc apply -n "${NAMESPACE}" -f models/glm-5.2/model-ops/glm52-hf-cache-example.yaml
+oc wait -n "${NAMESPACE}" --for=jsonpath='{.status.phase}'=Bound pvc/glm-5-2-hf-cache --timeout=10m
+oc apply -n "${NAMESPACE}" -f models/glm-5.2/model-ops/download-nvfp4-hf-cache.yaml
+oc wait -n "${NAMESPACE}" --for=condition=complete job/download-glm52-nvfp4-hf-cache --timeout=6h
+```
+
+The Job checks that `config.json` exists and must complete before serving
+starts. If it fails, inspect its logs and events, correct the cause, then
+delete and recreate the Job. Completed Jobs are retained, so applying one again
+does not rerun the download. Keep the HF cache PVC between runs; the separate
+`glm-5-2-jit-cache` PVC is populated at runtime. HF access remains enabled, so
+a cache miss or changed default model revision can still download files; this
+recipe is not offline-ready.
 
 From the repository root, install the documented tooling dependencies and
 Kustomize, then run:
