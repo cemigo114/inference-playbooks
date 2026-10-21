@@ -91,8 +91,12 @@ rewrites currently fail rather than being guessed. Declared manifests also
 participate in local receipt-input checks.
 
 Model identity and load location are separate: an HF checkpoint, filesystem
-path, and API alias need not be equal. Manifest-bound parent evidence requires
-exact checkpoint model labels; aliases cannot authorize another PVC/path.
+path, and API alias need not be equal. Any supplied model identity labels must
+match the checkpoint declaration; aliases cannot authorize another PVC/path.
+Harnesses need not duplicate those labels: for example, current AIPerf output
+can contain only phase/tool/concurrency labels. Such records retain tested
+execution/manifest attribution without synthesized model labels or normalized
+`model_identity`. Missing labels are not independent proof of weight identity.
 LWS runtime model arguments must agree with the tested launch. LLMInferenceService
 controller-generated local paths must resolve to its declared PVC/mount/subpath,
 not a hardcoded `/mnt/models` exception.
@@ -187,10 +191,17 @@ Create protected environment `forge-evidence`, with:
 - Optional repository-level `FORGE_INGEST_RUNNER`: JSON runner labels with MLflow
   network access, e.g. `["self-hosted", "forge-evidence"]`. Default is `ubuntu-latest`.
   A custom runner must provide Bash, Git, and the GitHub CLI (`gh`).
-- Optional `FORGE_INGEST_GITHUB_TOKEN`: GitHub App/fine-grained token with
-  contents/PR write permission. This is needed to trigger normal PR CI from
-  the automated PR; events created with `GITHUB_TOKEN` generally do not trigger
-  other workflows. Enable repository permissions for automated PR creation.
+- Variable `FORGE_INGEST_APP_CLIENT_ID` and secret `FORGE_INGEST_APP_PRIVATE_KEY`:
+  an organization-owned GitHub App installed only on this repository, with
+  Contents and Pull requests read/write (Metadata read is implicit). No webhooks
+  or event subscriptions are needed. Restrict the `forge-evidence` environment
+  deployment branch policy to `main` before storing the App private key.
+  The workflow mints a repository-scoped installation token only for publication
+  and revokes it at job completion. Discovery uses the read-only `GITHUB_TOKEN`.
+  PR authorship and commit author/committer use the App's `[bot]` identity, not
+  the dispatching user. App-authored PRs trigger normal PR CI.
+  App credentials are required: there is no personal-token or `GITHUB_TOKEN`
+  publication fallback. The old `FORGE_INGEST_GITHUB_TOKEN` is no longer used.
 
 Dispatch the workflow from `main`; other refs are deliberately excluded.
 

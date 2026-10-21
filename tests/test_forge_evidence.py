@@ -463,7 +463,7 @@ def test_receipt_rechecks_committed_manifest_after_initial_binding(pvc_parent_in
 
 
 @pytest.mark.parametrize('failure', ['path', 'claim', 'mount', 'alias', 'image', 'env', 'security',
-                                    'manifest-drift', 'missing-identity'])
+                                    'manifest-drift', 'identity-conflict'])
 def test_pvc_launch_drift_never_authorized_by_alias(pvc_parent_intake, failure):
     repo, path, revision, client, _, artifacts, raw, source = pvc_parent_intake
     deployment = yaml.safe_load(artifacts[source])
@@ -488,12 +488,39 @@ def test_pvc_launch_drift_never_authorized_by_alias(pvc_parent_intake, failure):
     else:
         document = json.loads(raw)
         for test in document['tests']:
-            test['labels'] = {'benchmark_tool': test['labels']['benchmark_tool']}
+            test['labels']['served_model'] = 'example/wrong-checkpoint'
         client.kpis = lambda _: ('01__test/002__postprocessing/kpis/kpis.json', json.dumps(document).encode())
     artifacts[source] = yaml.safe_dump(deployment)
     with pytest.raises(ValueError):
         import_parent(client, repo, 'd' * 32, revision, 34, require_parent=True)
     assert not (path.parent / 'results').exists()
+
+
+def test_manifest_bound_harness_without_duplicate_model_labels(pvc_parent_intake):
+    repo, path, revision, client, _, _, raw, _ = pvc_parent_intake
+    document = json.loads(raw)
+    for test in document['tests']:
+        if test['labels']['benchmark_tool'] == 'aiperf':
+            test['labels'] = {'phase': 'benchmark', 'benchmark_tool': 'aiperf', 'concurrency': '32'}
+    # Parent artifacts can also contain non-benchmark entries. Neither those nor
+    # a harness omitting duplicate identity labels should invent model metadata.
+    document['tests'].append({'labels': {'phase': 'setup'}, 'kpis': []})
+    raw = json.dumps(document).encode()
+    client.kpis = lambda _: ('01__test/002__postprocessing/kpis/kpis.json', raw)
+    import_parent(client, repo, 'd' * 32, revision, 34, require_parent=True)
+    references = yaml.safe_load(path.read_text())['benchmark_runs']
+    assert len(references) == 2
+    for reference in references:
+        run_path = path.parent / reference
+        run = yaml.safe_load(run_path.read_text())
+        result = json.loads((run_path.parent / 'result.json').read_text())
+        assert (run_path.parent / 'kpis.json').read_bytes() == raw
+        assert validate_benchmark_run(repo, run_path, run)[0] == []
+        if run['harness'] == 'aiperf':
+            assert run['workload']['tests'] == [{'phase': 'benchmark', 'benchmark_tool': 'aiperf', 'concurrency': '32'}]
+            assert 'model_identity' not in result
+        else:
+            assert result['model_identity']['served_model'] == 'example/base-FP8'
 
 
 def test_manifest_bound_product_version_is_not_engine_version(parent_intake):
@@ -1514,6 +1541,35 @@ def test_ingestion_workflow_is_standalone():
     assert 'python3 tools/validate.py --current' in text
     assert 'ref: main' in text
     assert "github.ref == 'refs/heads/main'" in text
+
+
+def test_ingestion_uses_repo_scoped_app_token_and_bot_identity():
+    text = (REPO / '.github/workflows/benchmark-ingest.yml').read_text()
+    job = yaml.safe_load(text)['jobs']['ingest']
+    assert job['permissions'] == {'contents': 'read', 'pull-requests': 'read'}
+    assert job['environment'] == 'forge-evidence'
+    steps = job['steps']
+    mint = next(step for step in steps if step.get('id') == 'app-token')
+    assert mint['uses'] == 'actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510'
+    assert mint['with'] == {
+        'client-id': '${{ vars.FORGE_INGEST_APP_CLIENT_ID }}',
+        'private-key': '${{ secrets.FORGE_INGEST_APP_PRIVATE_KEY }}',
+        'owner': '${{ github.repository_owner }}',
+        'repositories': '${{ github.event.repository.name }}',
+        'permission-contents': 'write',
+        'permission-pull-requests': 'write',
+    }
+    publish = next(step for step in steps if step.get('name') == 'Open evidence import PR')
+    assert publish['with']['token'] == '${{ steps.app-token.outputs.token }}'
+    assert publish['with']['author'] == '${{ steps.bot-identity.outputs.author }}'
+    assert publish['with']['committer'] == publish['with']['author']
+    identity = next(step for step in steps if step.get('id') == 'bot-identity')
+    assert identity['env']['GH_TOKEN'] == '${{ steps.app-token.outputs.token }}'
+    assert 'gh api "users/$bot_login"' in identity['run']
+    fetch = next(step for step in steps if step.get('name') == 'Fetch and normalize attributed evidence')
+    assert fetch['env']['GH_TOKEN'] == '${{ github.token }}'
+    assert steps.index(mint) < steps.index(publish)
+    assert 'FORGE_INGEST_GITHUB_TOKEN' not in text
 
 
 def test_attribution_cannot_remove_tested_evidence_references(intake, monkeypatch):
